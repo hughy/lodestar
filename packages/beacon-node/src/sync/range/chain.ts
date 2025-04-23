@@ -45,6 +45,7 @@ export type SyncChainFns = {
   reportPeer: (peer: PeerIdStr, action: PeerAction, actionName: string) => void;
   /** Hook called when Chain state completes */
   onEnd: (err: Error | null, target: ChainTarget | null) => void;
+  getPeerCustodyColumns: (peer: PeerIdStr) => number[];
 };
 
 /**
@@ -107,13 +108,12 @@ export class SyncChain {
   private readonly processChainSegment: SyncChainFns["processChainSegment"];
   private readonly downloadBeaconBlocksByRange: SyncChainFns["downloadBeaconBlocksByRange"];
   private readonly reportPeer: SyncChainFns["reportPeer"];
+  private readonly getPeerCustodyColumns: SyncChainFns["getPeerCustodyColumns"];
   /** AsyncIterable that guarantees processChainSegment is run only at once at anytime */
   private readonly batchProcessor = new ItTrigger();
   /** Sorted map of batches undergoing some kind of processing. */
   private readonly batches = new Map<Epoch, Batch>();
-  private readonly peerset = new Map<PeerIdStr, ChainTarget>();
-  // TODO: @matthewkeil check if this needs to be updated for custody groups
-  private readonly peersetCustody = new Map<PeerIdStr, {custodyColumns: number[]; clientAgent: string}>();
+  private readonly peerset = new Map<PeerIdStr, {target: ChainTarget; clientAgent: string}>();
 
   private readonly logger: Logger;
   private readonly config: ChainForkConfig;
@@ -132,6 +132,7 @@ export class SyncChain {
     this.processChainSegment = fns.processChainSegment;
     this.downloadBeaconBlocksByRange = fns.downloadBeaconBlocksByRange;
     this.reportPeer = fns.reportPeer;
+    this.getPeerCustodyColumns = fns.getPeerCustodyColumns;
     this.config = modules.config;
     this.logger = modules.logger;
     this.logId = `${syncType}`;
@@ -196,9 +197,8 @@ export class SyncChain {
    * Add peer to the chain and request batches if active
    */
   // TODO: @matthewkeil check if this needs to be updated for custody groups
-  addPeer(peer: PeerIdStr, target: ChainTarget, custodyColumns: number[], clientAgent: string): void {
-    this.peerset.set(peer, target);
-    this.peersetCustody.set(peer, {custodyColumns, clientAgent});
+  addPeer(peer: PeerIdStr, target: ChainTarget, clientAgent: string): void {
+    this.peerset.set(peer, {target, clientAgent});
     this.computeTarget();
     this.triggerBatchDownloader();
   }
@@ -256,7 +256,7 @@ export class SyncChain {
 
   private computeTarget(): void {
     if (this.peerset.size > 0) {
-      const targets = Array.from(this.peerset.values());
+      const targets = Array.from(this.peerset.values(), (peer) => peer.target);
       this.target = computeMostCommonTarget(targets);
     }
   }
@@ -340,7 +340,11 @@ export class SyncChain {
       return;
     }
 
-    const peerBalancer = new ChainPeersBalancer(peers, this.peersetCustody, toArr(this.batches));
+    const peersetCustody = new Map<PeerIdStr, {custodyColumns: number[]}>();
+    for (const peer of peers) {
+      peersetCustody.set(peer, {custodyColumns: this.getPeerCustodyColumns(peer)});
+    }
+    const peerBalancer = new ChainPeersBalancer(peers, peersetCustody, toArr(this.batches));
 
     // Retry download of existing batches
     for (const batch of this.batches.values()) {
@@ -404,7 +408,7 @@ export class SyncChain {
   private async sendBatch(batch: Batch, peer: PeerIdStr): Promise<void> {
     try {
       const partialDownload = batch.startDownloading(peer);
-      const peerClient = this.peersetCustody.get(peer)?.clientAgent ?? "unknown";
+      const peerClient = this.peerset.get(peer)?.clientAgent ?? "unknown";
 
       // wrapError ensures to never call both batch success() and batch error()
       const res = await wrapError(this.downloadBeaconBlocksByRange(peer, batch.request, partialDownload, peerClient));

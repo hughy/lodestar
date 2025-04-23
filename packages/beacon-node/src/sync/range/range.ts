@@ -232,6 +232,11 @@ export class RangeSync extends (EventEmitter as {new (): RangeSyncEmitter}) {
     }
   };
 
+  /** Convenience method for `SyncChain` */
+  private getPeerCustodyColumns: SyncChainFns["getPeerCustodyColumns"] = (peer) => {
+    return this.network.getConnectedPeerCustody(peer);
+  };
+
   private addPeerOrCreateChain(startEpoch: Epoch, target: ChainTarget, peer: PeerIdStr, syncType: RangeSyncType): void {
     let syncChain = this.chains.get(syncType);
     if (!syncChain) {
@@ -244,6 +249,7 @@ export class RangeSync extends (EventEmitter as {new (): RangeSyncEmitter}) {
           downloadBeaconBlocksByRange: this.downloadBeaconBlocksByRange,
           reportPeer: this.reportPeer,
           onEnd: this.onSyncChainEnd,
+          getPeerCustodyColumns: this.getPeerCustodyColumns,
         },
         {config: this.config, logger: this.logger}
       );
