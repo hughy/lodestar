@@ -19,10 +19,12 @@ import {
   SignedBeaconBlock,
   SignedBeaconBlockOrContents,
   SignedBlindedBeaconBlock,
+  Slot,
   WithOptionalBytes,
   deneb,
   fulu,
   isSignedBlockContents,
+  ssz,
 } from "@lodestar/types";
 import {fromHex, sleep, toHex, toRootHex} from "@lodestar/utils";
 import {
@@ -47,6 +49,7 @@ import {isOptimisticBlock} from "../../../../util/forkChoice.js";
 import {promiseAllMaybeAsync} from "../../../../util/promises.js";
 import {ApiModules} from "../../types.js";
 import {getBlockResponse, toBeaconHeaderResponse} from "./utils.js";
+import {onDataColumnSidecarsByRange} from "../../../../network/reqresp/handlers/dataColumnSidecarsByRange.js";
 
 type PublishBlockOpts = ImportBlockOpts;
 
@@ -535,6 +538,45 @@ export function getBeaconBlockApi({
           executionOptimistic,
           finalized,
           version: config.getForkName(block.message.slot),
+        },
+      };
+    },
+
+    async getDataColumnSidecarsByRange({
+      startSlot,
+      count,
+      columns,
+    }: {
+      startSlot: Slot;
+      count: number;
+      columns: number[];
+    }) {
+      const request = {startSlot, count, columns};
+
+      // Get a connected peer that can serve the requested columns
+      const connectedPeers = network.getConnectedPeers();
+      if (connectedPeers.length === 0) {
+        throw new Error("No connected peers available");
+      }
+
+      // Select the first peer that can serve the requested columns
+      const selectedPeer = connectedPeers.find((peerId) => {
+        const peerColumns = network.getConnectedPeerCustody(peerId);
+        return columns.every((col) => peerColumns.includes(col));
+      });
+
+      if (!selectedPeer) {
+        throw new Error("No peer available that can serve all requested columns");
+      }
+
+      const dataColumnSidecars = await network.sendDataColumnSidecarsByRange(selectedPeer, request);
+
+      return {
+        data: dataColumnSidecars,
+        meta: {
+          executionOptimistic: false,
+          finalized: true,
+          version: config.getForkName(startSlot),
         },
       };
     },

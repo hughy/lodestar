@@ -10,6 +10,7 @@ import {
   SignedBlockContents,
   Slot,
   deneb,
+  fulu,
   isSignedBlockContents,
   ssz,
   sszTypesFor,
@@ -218,6 +219,22 @@ export type Endpoints = {
     },
     {params: {block_id: string}; query: {indices?: number[]}},
     deneb.BlobSidecars,
+    ExecutionOptimisticFinalizedAndVersionMeta
+  >;
+
+  /**
+   * Get data column sidecars by range
+   * Retrieves data column sidecars for a range of slots.
+   */
+  getDataColumnSidecarsByRange: Endpoint<
+    "POST",
+    {
+      startSlot: Slot;
+      count: number;
+      columns: number[];
+    },
+    {body: {start_slot: string; count: string; columns: string[]}},
+    fulu.DataColumnSidecars,
     ExecutionOptimisticFinalizedAndVersionMeta
   >;
 };
@@ -548,6 +565,48 @@ export function getDefinitions(config: ChainForkConfig): RouteDefinitions<Endpoi
       },
       resp: {
         data: ssz.deneb.BlobSidecars,
+        meta: ExecutionOptimisticFinalizedAndVersionCodec,
+      },
+    },
+    getDataColumnSidecarsByRange: {
+      url: "/eth/v1/beacon/data_column_sidecars_by_range",
+      method: "POST",
+      req: {
+        writeReqJson: ({startSlot, count, columns}) => ({
+          body: {
+            start_slot: startSlot.toString(),
+            count: count.toString(),
+            columns: columns.map(String),
+          },
+        }),
+        parseReqJson: ({body}) => ({
+          startSlot: Number(body.start_slot),
+          count: Number(body.count),
+          columns: Array.isArray(body.columns) ? body.columns.map(Number) : [Number(body.columns)],
+        }),
+        writeReqSsz: ({startSlot, count, columns}) => ({
+          body: Buffer.from(
+            JSON.stringify({
+              start_slot: startSlot.toString(),
+              count: count.toString(),
+              columns: columns.map(String),
+            })
+          ),
+        }),
+        parseReqSsz: ({body}) => {
+          const data = JSON.parse(body.toString());
+          return {
+            startSlot: Number(data.start_slot),
+            count: Number(data.count),
+            columns: Array.isArray(data.columns) ? data.columns.map(Number) : [Number(data.columns)],
+          };
+        },
+        schema: {
+          body: Schema.Object,
+        },
+      },
+      resp: {
+        data: ssz.fulu.DataColumnSidecars,
         meta: ExecutionOptimisticFinalizedAndVersionCodec,
       },
     },
